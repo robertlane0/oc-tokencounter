@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { default as plugin } from "../.opencode/plugins/usage-tracker.ts"
-import { loadStore, listStores } from "../.opencode/plugins/usage-lib.ts"
+import { loadStore, listStores } from "../.opencode/plugins/lib/usage-lib.ts"
 
 const root = mkdtempSync(path.join(os.tmpdir(), "usage-tracker-test-"))
 process.env.XDG_DATA_HOME = path.join(root, "xdg")

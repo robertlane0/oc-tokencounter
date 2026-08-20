@@ -10,7 +10,7 @@ import {
   storeFileFor,
   type DirectoryStore,
   type Tokens,
-} from "./usage-lib.ts"
+} from "./lib/usage-lib.ts"
 
 type RuntimeEvent = {
   id: string

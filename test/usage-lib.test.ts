@@ -21,7 +21,7 @@ import {
   parseUsageArgs,
   saveStore,
   storeFileFor,
-} from "../.opencode/plugins/usage-lib.ts"
+} from "../.opencode/plugins/lib/usage-lib.ts"
 
 const dir = "/projects/alpha"
 const tmp = mkdtempSync(path.join(os.tmpdir(), "usage-counter-test-"))

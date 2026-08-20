@@ -3,8 +3,8 @@ import assert from "node:assert/strict"
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { default as plugin } from "../.opencode/plugins/usage-tui.ts"
-import { applyStep, applyCompaction, emptyStore, saveStore } from "../.opencode/plugins/usage-lib.ts"
+import { default as plugin } from "../.opencode/plugins/lib/usage-tui.ts"
+import { applyStep, applyCompaction, emptyStore, saveStore } from "../.opencode/plugins/lib/usage-lib.ts"
 
 const root = mkdtempSync(path.join(os.tmpdir(), "usage-tui-test-"))
 process.env.XDG_DATA_HOME = path.join(root, "xdg")

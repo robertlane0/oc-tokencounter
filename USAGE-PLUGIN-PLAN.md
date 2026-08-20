@@ -47,7 +47,9 @@ Design constraints (confirmed with user):
 - **`usage-tui.ts`** runs in the **TUI** process. It registers the `/usage` command and an Enter-key interceptor, reads the shared store, and renders dialogs. It never talks to an LLM.
 - **`usage-lib.ts`** — shared helpers (store paths, schema, aggregation, tree building) imported by both files.
 
-Note: OpenCode requires a plugin to export **either** `server` **or** `tui` — not both (`packages/opencode/src/plugin/shared.ts:293`). Two files are therefore needed. Both are auto-discovered from `.opencode/plugins/*.ts` (or `~/.config/opencode/plugins/*.ts` for global install).
+Note: OpenCode requires a plugin to export **either** `server` **or** `tui` — not both (`packages/opencode/src/plugin/shared.ts:293`). Two files are therefore needed.
+
+**Discovery mechanism (verified against 1.18.18):** only the **server** auto-discovers files via the glob `{plugin,plugins}/*.{ts,js}` (top-level only, `packages/opencode/src/config/plugin.ts:21`). The **TUI** loads plugins **only from `tui.json` declarations** (`TuiConfig.pluginOrigins()`, `packages/opencode/src/config/tui.ts`), so the TUI plugin must be declared in `tui.json`. Helper modules must live in a subdirectory (e.g. `plugins/lib/`) so the server glob never picks them up — otherwise the server's legacy loader treats every named export function as a server plugin (`isServerPlugin` = "is a function", `plugin/index.ts:86`) and fails with `{} is not iterable`, and a `tui`-only file fails with `must default export an object with server()`.
 
 ### 2.1 Key codebase facts (verified in opencode source at `/tmp/opencode`)
 
@@ -219,13 +221,14 @@ Rendered through `api.ui.dialog.replace(() => <Dialog .../>)`. Because local plu
 | File | Type | Purpose |
 | --- | --- | --- |
 | `USAGE-PLUGIN-PLAN.md` | plan | this document |
-| `.opencode/plugins/usage-lib.ts` | helper | store paths, schema, aggregation, tree, arg parsing, formatting |
+| `.opencode/plugins/lib/usage-lib.ts` | helper | store paths, schema, aggregation, tree, arg parsing, formatting (in `lib/` so the server's `plugins/*.ts` glob skips it) |
 | `.opencode/plugins/usage-tracker.ts` | **server** plugin | event tracking + persistence + backfill |
-| `.opencode/plugins/usage-tui.ts` | **tui** plugin | `/usage` command, Enter intercept, dialogs |
+| `.opencode/plugins/lib/usage-tui.ts` | **tui** plugin | `/usage` command, Enter intercept, dialogs (in `lib/`, declared via `tui.json`) |
+| `.opencode/tui.json` | TUI config | declares the TUI plugin (`"plugin": ["./plugins/lib/usage-tui.ts"]`) — required, the TUI does not auto-discover plugin files |
 | `.opencode/package.json` | deps | only if external packages are required (e.g. `solid-js`) |
 | test files (see §8) | tests | unit tests for aggregation/parsing/tree |
 
-Install: copy to `.opencode/plugins/` for project-local, or `~/.config/opencode/plugins/` for **global** (recommended, so every folder is tracked and `/usage models|tree|<model>` are meaningful). Local plugin files under these directories are auto-discovered.
+Install: copy the `plugins/` directory and `tui.json` to `.opencode/` for project-local, or `~/.config/opencode/` for **global** (recommended, so every folder is tracked and `/usage models|tree|<model>` are meaningful). Both config dirs are auto-discovered by the server; the TUI plugin additionally requires the `tui.json` declaration in the same location.
 
 ## 8. Verification
 
