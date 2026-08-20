@@ -32,7 +32,9 @@ async function pollSessions(client: any, store: DirectoryStore) {
     }
 
     try {
-      const messages = unwrapArray(await client.session.messages({ sessionID: id }))
+      const messages = unwrapArray(
+        await client.session.messages({ path: { id }, query: { directory: store.directory } }),
+      )
       applyBackfillSession(store, id, session.title, session.time?.created, currentUpdated, messages)
       changed = true
     } catch {}

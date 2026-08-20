@@ -44,7 +44,11 @@ function fakeClient() {
     },
     session: {
       list: async ({ query }: any) => ({ data: [...sessions] }),
-      messages: async ({ sessionID }: any) => ({ data: messages[sessionID] ?? [] }),
+      // Mirrors the real @opencode-ai/sdk client: the session id is a path
+      // param (`path: { id }`), not a flat `sessionID` field. A mock that
+      // accepted `{ sessionID }` here previously let this test pass while
+      // the real SDK call silently failed against a live server.
+      messages: async ({ path }: any) => ({ data: messages[path?.id] ?? [] }),
     },
   }
 }
