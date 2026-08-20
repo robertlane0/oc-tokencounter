@@ -54,7 +54,7 @@ Note: OpenCode requires a plugin to export **either** `server` **or** `tui` — 
 - **Events a server plugin receives** (`event` hook, `packages/opencode/src/plugin/index.ts:253`): the hook is called with `{ id, type, properties }` for every `EventV2` publish routed to the plugin's directory. The relevant session events are:
   - `session.next.step.started` — `{ sessionID, assistantMessageID, agent, model: { providerID, id, variant? }, ... }`
   - `session.next.step.ended` — `{ sessionID, assistantMessageID, finish, cost, tokens: { input, output, reasoning, cache: { read, write } }, ... }`
-  - `session.next.compaction.started` / `session.next.compaction.ended` — `{ sessionID, messageID, reason: "auto"|"manual" }`
+  - `session.next.compaction.started` — `{ sessionID, messageID, reason: "auto"|"manual" }` (verified in source: `session.next.compaction.ended` does not exist)
   - `session.compacted` — `{ sessionID }`
   - `session.next.model.switched` — `{ sessionID, messageID, model }` (optional)
   - Published from `packages/core/src/session/runner/publish-llm-event.ts:78`, `packages/core/src/session/runner/llm.ts:333`, and `packages/core/src/session/compaction.ts:192,222`.
@@ -121,7 +121,7 @@ export const UsageTracker: Plugin = async ({ directory, client }) => { ... }
 2. **Event hook** — `switch (event.type)`:
    - `session.next.step.started` → put `{ assistantMessageID: { sessionID, model, agent } }` into a pending `Map`.
    - `session.next.step.ended` → pop pending by `assistantMessageID`; **increment** `models[providerID/modelID]` (input/output/reasoning/cache read/write, calls), `agents[agent]`, and `sessions[sessionID]` aggregates; mark `msg_` id as processed.
-   - `session.next.compaction.started` or `session.compacted` → increment `compactions.total` (and `auto`/`manual` from the `reason`); also record on the session.
+   - `session.next.compaction.started` → increment `compactions.total` (and `auto`/`manual` from the `reason`); also record on the session. (`session.compacted` also fires per compaction, so it is **not** handled to avoid double counting.)
    - `session.next.model.switched` → record on the session (optional, for "models used per session").
    - Ignore everything else.
 3. **Persistence:** debounced write (e.g. flush at most every 2 s and always on `dispose()`) using **atomic write** (write `tmp` file then `rename`). Re-read before write if the file changed on disk to reduce cross-instance clobbering.
