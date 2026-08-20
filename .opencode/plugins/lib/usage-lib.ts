@@ -395,6 +395,8 @@ export function applyBackfillSession(
   for (const message of messages) {
     for (const part of message?.parts ?? []) {
       if (part?.type === "compaction") {
+        if (part.id && session.processed.includes(part.id)) continue
+        if (part.id) pushProcessed(session, part.id)
         applyCompaction(store, sessionID, part.auto === true ? "auto" : "manual", numberOr(part.time?.created, Date.now()))
       }
     }

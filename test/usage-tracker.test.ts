@@ -27,6 +27,7 @@ function fakeClient() {
           providerID: "openai",
           modelID: "gpt-5",
           cost: 0.01,
+          time: { completed: 150 },
           tokens: { input: 10, output: 2, reasoning: 0, cache: { read: 1, write: 0 } },
         },
         parts: [{ id: "p1", type: "text" }],
@@ -34,15 +35,18 @@ function fakeClient() {
     ],
   }
   return {
+    _pushSession(s: any) {
+      sessions.push(s)
+    },
+    _pushMessage(sessionID: string, m: any) {
+      if (!messages[sessionID]) messages[sessionID] = []
+      messages[sessionID].push(m)
+    },
     session: {
-      list: async ({ query }: any) => ({ data: sessions }),
+      list: async ({ query }: any) => ({ data: [...sessions] }),
       messages: async ({ sessionID }: any) => ({ data: messages[sessionID] ?? [] }),
     },
   }
-}
-
-function event(type: string, properties: Record<string, any>) {
-  return { event: { id: "e", type, properties } }
 }
 
 describe("usage-tracker plugin", () => {
@@ -51,11 +55,12 @@ describe("usage-tracker plugin", () => {
     assert.equal(typeof plugin.server, "function")
   })
 
-  it("backfills existing sessions and tracks live events", async () => {
+  it("backfills existing sessions and tracks live events via polling", async () => {
     const directory = path.join(root, "proj")
     const { server } = plugin
+    const client = fakeClient()
     const hooks = await server({
-      client: fakeClient(),
+      client,
       directory,
       worktree: root,
     } as any)
@@ -68,27 +73,30 @@ describe("usage-tracker plugin", () => {
     assert.equal(store.models["openai/gpt-5"].cost, 0.01)
     assert.equal(store.sessions["s-old"].title, "Old session")
 
-    await hooks.event!(event("session.next.step.started", {
-      sessionID: "s-new",
-      assistantMessageID: "am1",
-      agent: "plan",
-      model: { providerID: "anthropic", id: "claude-4" },
-    }))
-    await hooks.event!(event("session.next.step.ended", {
-      sessionID: "s-new",
-      assistantMessageID: "am1",
-      finish: "end",
-      cost: 0,
-      tokens: { input: 5, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
-    }))
-    await hooks.event!(event("session.next.compaction.started", {
-      sessionID: "s-new",
-      messageID: "c1",
-      reason: "manual",
-    }))
-    await hooks.event!(event("session.compacted", {
-      sessionID: "s-new",
-    }))
+    client._pushSession({
+      id: "s-new",
+      title: "New session",
+      time: { created: 300, updated: 400 },
+    })
+    client._pushMessage("s-new", {
+      info: { id: "u2", role: "user", agent: "plan" }, parts: []
+    })
+    client._pushMessage("s-new", {
+      info: {
+        id: "am1",
+        role: "assistant",
+        providerID: "anthropic",
+        modelID: "claude-4",
+        cost: 0.02,
+        time: { completed: 350 },
+        tokens: { input: 5, output: 1, reasoning: 0, cache: { read: 0, write: 0 } }
+      },
+      parts: [
+        { id: "c1", type: "compaction", auto: false, time: { created: 350 } }
+      ]
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 2050))
     await hooks.dispose!()
 
     const updated = loadStore(directory, root)
@@ -100,29 +108,14 @@ describe("usage-tracker plugin", () => {
     assert.equal(updated.sessions["s-new"].compactions, 1)
   })
 
-  it("tracks step.ended without a matching started event", async () => {
-    const directory = path.join(root, "proj2")
-    const { server } = plugin
-    const hooks = await server({ client: fakeClient(), directory, worktree: root } as any)
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    await hooks.event!(event("session.next.step.ended", {
-      sessionID: "s2",
-      assistantMessageID: "am2",
-      tokens: { input: 3, output: 0 },
-    }))
-    await hooks.dispose!()
-    const store = loadStore(directory, root)
-    assert.equal(store.models["unknown/unknown"].input, 3)
-  })
-
   it("does not double count after a restart (backfill only once)", async () => {
     const directory = path.join(root, "proj3")
     const { server } = plugin
     const hooks = await server({ client: fakeClient(), directory, worktree: root } as any)
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    await new Promise((resolve) => setTimeout(resolve, 50))
     await hooks.dispose!()
     const hooks2 = await server({ client: fakeClient(), directory, worktree: root } as any)
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    await new Promise((resolve) => setTimeout(resolve, 50))
     await hooks2.dispose!()
     const store = loadStore(directory, root)
     assert.equal(store.models["openai/gpt-5"].calls, 1)
