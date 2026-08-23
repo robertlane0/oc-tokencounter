@@ -27,7 +27,7 @@ OpenCode does not offer a built-in cross-folder view of how many tokens and whic
 
 - Per-folder, per-path, per-model, and global usage views
 - Token breakdown: input, output, reasoning, cache read/write
-- Real cost from stored messages (live events report `cost: 0`; see [Known limitations](#known-limitations))
+- Real cost from stored session messages (every recorded step carries its persisted cost)
 - Per-agent stats (`build`, `plan`, subagents, …)
 - Compaction counts split by auto/manual
 - Heaviest sessions per folder, with the current session highlighted (`*`)
@@ -43,10 +43,10 @@ OpenCode requires a plugin to export **either** `server` **or** `tui` — not bo
 ┌─────────────────────────┐        ┌───────────────────────────┐
 │  usage-tracker.ts       │        │  usage-tui.ts             │
 │  (server plugin)        │        │  (TUI plugin)             │
-│  - event hooks          │        │  - /usage slash command   │
+│  - 2 s session polling  │        │  - /usage slash command   │
 │  - aggregation          │  reads │  - Enter-key intercept    │
 │  - persistence          ├───────►│  - dialogs / canned errors│
-│  - startup backfill     │  store │  - export / reset         │
+│  - backfill + live turns│  store │  - export / reset         │
 └───────────┬─────────────┘        └───────────┬───────────────┘
             │ writes                          │ reads
             ▼                                 ▼
@@ -57,7 +57,7 @@ OpenCode requires a plugin to export **either** `server` **or** `tui` — not bo
    └──────────────────────────────────────────────────────────┘
 ```
 
-- **`usage-tracker.ts`** (server) subscribes to session events (`session.next.step.started` / `.ended`, `session.next.compaction.started`), correlates tokens to models via `assistantMessageID`, and writes to a per-directory JSON store with debounced, atomic (tmp + rename) writes. On first load for a directory it backfills historical usage from `client.session.list()` + `client.session.messages()`. Message IDs recorded in each session's `processed` list make both paths idempotent.
+- **`usage-tracker.ts`** (server) polls the OpenCode SDK every 2 s: `client.session.list({ query: { directory } })` finds sessions whose `time.updated` moved past the stored value, and `client.session.messages({ path: { id } })` returns their persisted messages. Completed assistant messages contribute tokens, cost, and model; compaction parts increment auto/manual counts; the preceding user message supplies the agent. Because everything is read back from OpenCode's session store, this single path covers both historical backfill on first launch and live turns — real cost included. Writes are atomic (temp file + rename) after any poll that changed data, plus one final poll + save on `dispose()`. Message/part IDs recorded in each session's `processed` list make counting idempotent across restarts.
 - **`usage-tui.ts`** (TUI) registers the `/usage` command (for autocomplete discoverability) and a priority-1 Enter-key interceptor. The interceptor is the actual gate: any prompt line starting with `/usage` or `/tokens` is prevented from submitting, the prompt is cleared, and a dialog is rendered — guaranteeing zero tokens are spent. Views are plain-text content passed to `DialogAlert`/`DialogConfirm`.
 - **`usage-lib.ts`** (shared, no side effects) holds store paths and schema, aggregation, tree building, argument parsing, and formatting — pure functions, unit-tested independently.
 
@@ -82,8 +82,10 @@ OpenCode's plugin loader only auto-discovers top-level `plugin(s)/*.ts` files (n
 │           └── usage-tui.ts         # TUI plugin: /usage command, interceptor, dialogs
 ├── test/
 │   ├── usage-lib.test.ts            # unit tests: aggregation, parsing, tree, formatting
-│   ├── usage-tracker.test.ts        # integration: events, backfill, idempotency
+│   ├── usage-tracker.test.ts        # integration: polling, backfill, idempotency
 │   └── usage-tui.test.ts            # integration: interception, dialogs, export
+├── install.sh                         # POSIX installer: global (default) or --local
+├── install.bat                        # Windows installer (same scopes)
 ├── USAGE-PLUGIN-PLAN.md             # detailed design & verification plan
 └── LICENSE                          # MIT
 ```
@@ -96,6 +98,22 @@ OpenCode's plugin loader only auto-discovers top-level `plugin(s)/*.ts` files (n
 ## Installation
 
 The plugin pair can be installed per-project or globally. **Global installation is recommended**, because it makes `/usage models`, `/usage tree`, and `/usage <model>` meaningful across all your projects.
+
+The easiest way is the bundled installer, run from a checkout of this repository. It copies `plugins/` and merges the TUI plugin declaration into an existing `tui.json` (without clobbering other plugins):
+
+```sh
+./install.sh              # global (default)
+./install.sh --local      # project-local
+```
+
+On Windows:
+
+```bat
+install.bat               # global (default)
+install.bat --local       # project-local
+```
+
+Or copy the files manually:
 
 ### Global (recommended)
 
@@ -185,7 +203,7 @@ Store schema (v1):
 }
 ```
 
-Writes are debounced (at most once per second) and atomic (write to a temp file, then rename). Files are safe to delete to clear data manually — `/usage reset` does exactly that.
+Writes are atomic (write to a temp file, then rename) and happen after any poll that changed data — roughly every 2 s while OpenCode is running, plus once more on shutdown. Files are safe to delete to clear data manually — `/usage reset` does exactly that.
 
 ## Development
 
@@ -203,7 +221,7 @@ or, if you use bun:
 bun test
 ```
 
-The suite covers store paths, aggregation, tree building, argument parsing, formatting, tracker event handling + backfill idempotency, and TUI interception/dialog rendering (34 tests).
+The suite covers store paths, aggregation, tree building, argument parsing, formatting, tracker polling + backfill idempotency, and TUI interception/dialog rendering (37 tests).
 
 ### Type checking
 
@@ -225,7 +243,7 @@ See [USAGE-PLUGIN-PLAN.md](USAGE-PLUGIN-PLAN.md) for the full design, the verifi
 ## Known limitations
 
 - **TUI-only display.** In `opencode run`, Web, or IDE surfaces the `/usage` command has no dialog — but the server plugin keeps tracking usage regardless.
-- **Live cost is 0.** `Step.Ended` events carry `cost: 0`; real cost only appears via backfill from stored session messages. Folder/model views therefore show cost from backfilled history (and 0 for newly recorded live steps).
+- **~2 s recording latency.** Usage is picked up on the tracker's next 2 s poll (plus one final poll on shutdown), so a turn that just finished can take a moment to appear. Nothing is lost: `dispose()` runs a final poll and saves before exit.
 - **Concurrent writers are best-effort.** Two OpenCode instances on the same directory use atomic renames (no corruption), but cross-instance merges of the same store file are last-writer-wins.
 - **Moved sessions.** A session that moves to another directory is tracked by the plugin instance running in that directory.
 
