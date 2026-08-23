@@ -71,6 +71,14 @@ const server = (input: PluginInput): Hooks => {
   return {
     dispose: async () => {
       if (timer) clearInterval(timer)
+      // Give an in-flight poll a chance to finish (bounded), then run one
+      // final poll so tokens from turns that completed since the last tick
+      // are recorded before the store is saved.
+      const deadline = Date.now() + 5000
+      while (running && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+      await runPoll()
       saveStore(store)
     },
   }

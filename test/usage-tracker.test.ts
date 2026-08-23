@@ -124,6 +124,45 @@ describe("usage-tracker plugin", () => {
     const store = loadStore(directory, root)
     assert.equal(store.models["openai/gpt-5"].calls, 1)
   })
+
+  it("runs a final poll on dispose so last-turn tokens are not lost", async () => {
+    const directory = path.join(root, "proj-final")
+    const client = fakeClient()
+    const { server } = plugin
+    const hooks = await server({ client, directory, worktree: root } as any)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    // A turn completes right before shutdown — there is no time for another
+    // 2s poll tick, so dispose must catch it.
+    client._pushSession({
+      id: "s-last",
+      title: "Last session",
+      time: { created: 600, updated: 700 },
+    })
+    client._pushMessage("s-last", {
+      info: { id: "u3", role: "user", agent: "build" },
+      parts: [],
+    })
+    client._pushMessage("s-last", {
+      info: {
+        id: "a3",
+        role: "assistant",
+        providerID: "anthropic",
+        modelID: "claude-4",
+        cost: 0.04,
+        time: { completed: 690 },
+        tokens: { input: 40, output: 4, reasoning: 0, cache: { read: 0, write: 0 } },
+      },
+      parts: [],
+    })
+
+    await hooks.dispose!()
+
+    const store = loadStore(directory, root)
+    assert.equal(store.models["anthropic/claude-4"].calls, 1)
+    assert.equal(store.models["anthropic/claude-4"].input, 40)
+    assert.equal(store.sessions["s-last"].title, "Last session")
+  })
 })
 
 rmSync(root, { recursive: true, force: true })

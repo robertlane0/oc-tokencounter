@@ -386,10 +386,16 @@ export function applyBackfillSession(
       continue
     }
     if (info.role !== "assistant") continue
+    // Assistant messages are persisted as soon as the turn starts, with zero
+    // tokens; tokens/cost/time.completed only land when the step finishes.
+    // Skip in-flight messages so they get counted on a later pass once they
+    // actually complete — counting them now would mark them processed and
+    // permanently lose their real usage.
+    if (!info.time?.completed) continue
     if (!info.id || session.processed.includes(info.id)) continue
     const tokens = normalizeTokens(info.tokens)
     const key = modelKey(info.providerID, info.modelID)
-    const completed = numberOr(info.time?.completed, numberOr(info.time?.created, Date.now()))
+    const completed = numberOr(info.time.completed, numberOr(info.time?.created, Date.now()))
     applyStep(store, sessionID, info.id, key, agent, tokens, numberOr(info.cost, 0), completed)
   }
   for (const message of messages) {
@@ -507,7 +513,10 @@ function makeNode(name: string, fullPath: string): TreeNode {
 
 function addStoreToTree(root: TreeNode, store: DirectoryStore) {
   const rel = path.relative(root.path, store.directory)
-  if (!rel || rel.startsWith("..")) return
+  // rel === "" means the store lives exactly at the tree root (e.g. the only
+  // tracked folder, or a parent that also has its own sessions). Its stats
+  // belong on the node itself — skipping it used to render empty trees.
+  if (rel.startsWith("..") || path.isAbsolute(rel)) return
   let node = root
   const parts = rel.split(path.sep).filter(Boolean)
   for (const part of parts) {

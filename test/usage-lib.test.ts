@@ -86,12 +86,20 @@ describe("applyBackfillSession", () => {
         providerID: "openai",
         modelID: "gpt-5",
         cost: 0.02,
+        time: { created: 100, completed: 150 },
         tokens: { input: 200, output: 50, reasoning: 0, cache: { read: 100, write: 0 } },
       },
       parts: [{ id: "p1", type: "text" }],
     },
     {
-      info: { id: "a2", role: "assistant", providerID: "openai", modelID: "gpt-5", tokens: { input: 10, output: 0 } },
+      info: {
+        id: "a2",
+        role: "assistant",
+        providerID: "openai",
+        modelID: "gpt-5",
+        time: { created: 200, completed: 250 },
+        tokens: { input: 10, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      },
       parts: [{ id: "p2", type: "compaction", auto: true }],
     },
   ]
@@ -109,6 +117,47 @@ describe("applyBackfillSession", () => {
     assert.equal(store.sessions["s1"].title, "Fix bug")
     applyBackfillSession(store, "s1", "Fix bug", 100, 200, messages as any)
     assert.equal(store.models["openai/gpt-5"].calls, 2)
+  })
+
+  it("does not count or record in-flight assistant messages until they complete", () => {
+    const store = emptyStore(dir, "/projects")
+    const streaming = [
+      { info: { id: "u9", role: "user", agent: "build" }, parts: [] },
+      {
+        // Mirrors a live turn: persisted at start with zero tokens and no
+        // time.completed; tokens only land when the step finishes.
+        info: {
+          id: "a9",
+          role: "assistant",
+          providerID: "openai",
+          modelID: "gpt-5",
+          cost: 0,
+          time: { created: 500 },
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+        parts: [],
+      },
+    ]
+    applyBackfillSession(store, "s1", "WIP", 400, 500, streaming as any)
+    assert.equal(store.models["openai/gpt-5"], undefined)
+    assert.equal(store.sessions["s1"]?.processed.includes("a9"), false)
+
+    const completed = [
+      streaming[0],
+      {
+        info: {
+          ...streaming[1]!.info,
+          cost: 0.03,
+          time: { created: 500, completed: 900 },
+          tokens: { input: 300, output: 20, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+        parts: [],
+      },
+    ]
+    applyBackfillSession(store, "s1", "WIP", 400, 900, completed as any)
+    assert.equal(store.models["openai/gpt-5"].calls, 1)
+    assert.equal(store.models["openai/gpt-5"].input, 300)
+    assert.equal(store.models["openai/gpt-5"].cost, 0.03)
   })
 })
 
@@ -183,6 +232,27 @@ describe("buildTree", () => {
     const beta = root.children.find((c) => c.name === "beta")!
     assert.equal(beta.calls, 1)
     assert.equal(beta.children.length, 1)
+  })
+  it("counts a single store at the tree root", () => {
+    const a = emptyStore(dir, "/projects")
+    applyStep(a, "s1", "m1", "openai/gpt-5", "build", tokens(100, 20), 0.01, 1000)
+    const root = buildTree([a])!
+    assert.equal(root.path, dir)
+    assert.equal(root.tokens.input, 100)
+    assert.equal(root.tokens.output, 20)
+    assert.equal(root.calls, 1)
+    assert.equal(root.cost, 0.01)
+  })
+  it("does not drop a store whose directory is the common root", () => {
+    const parent = emptyStore("/projects", "/projects")
+    applyStep(parent, "p1", "m1", "openai/gpt-5", "build", tokens(70), 0, 1000)
+    const child = emptyStore("/projects/beta", "/projects")
+    applyStep(child, "c1", "m2", "anthropic/claude", "plan", tokens(30), 0, 2000)
+    const root = buildTree([parent, child])!
+    assert.equal(root.tokens.input, 100)
+    assert.equal(root.calls, 2)
+    const beta = root.children.find((c) => c.name === "beta")!
+    assert.equal(beta.tokens.input, 30)
   })
 })
 
